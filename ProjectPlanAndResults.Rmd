@@ -1,0 +1,237 @@
+---
+title: "Initial project plan and results"
+author: "Chris Beeley"
+date: "21 November 2018"
+output: html_document
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(tidytext)
+library(pander)
+library(knitr)
+library(DT)
+
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, message = FALSE)
+
+load("safeData.Rdata")
+
+```
+
+## Introduction
+
+Nottinghamshire Healthcare NHS Trust has been systematically collecting feedback from its patients since 2009 and shares the [results openly on the web](http://feedback.nottinghamshirehealthcare.nhs.uk/). In particular, in [this part of the website](http://109.74.194.173:8080/apps/SUCE/) which runs R through Shiny to deliver interactive summaries of the data that we collect. This reporting system is under active development at the time of writing and the data science accelerator project will provide outputs that can be ported directly into this system to improve the quality of reporting.
+
+## Project plan
+
+This is a very rough project plan which outlines what I would like to do during the time of the data science accelerator, what data is available to do it with, and some very early descriptives of the data to start to give an idea about what might be in there.
+
+### Aims
+
+Initial thoughts are summarised following, these ideas are all subject to change based on their complexity, dependencies, and other factors.
+
+* Produce an algorithm which can read the written comments that the Trust collects and categorise them both in terms of what they are about as well as their sentiment (that is, whether they are positive or negative)
+* Answer specific questions about the data, and provide a methodology that can answer similar questions in this and other contexts. For example, are different types of experience more or less important depending on the type of service which is being provided? It may be that issues of privacy and dignity are relatively more important in some contexts, whereas in other contexts the quality of relationship is more important.
+* Provide a methodology which can help to compare the quality of patient experience both between different service areas as well as within individual service areas over time
+* Investigate the connection between subject matter and sentimentality and other responses within the survey, such as responses to Likert type items assessing satisfaction, as well as demographic features of patients such as gender and religion
+* A key plank of this work will be ensuring that it can not only be utilised within the technology that Nottinghamshire Healthcare already uses but also within any other similar implementations (the Trust is actively looking to share key elements of the system with other organisations) and indeed within generic systems in use elsewhere in the NHS or anywhere else for that matter. Although some work has been done in this area much of it is proprietary and cannot therefore be freely used in Nottinghamshre Healthcare or elsewhere
+
+## The data
+
+This project makes use of a very rich repository of data, which includes close to 200,000 written comments. These comments come with rich metadata, including a human judgement on their subject matter and level of sentiment, as well as responses to Likert type items assessing their general satisfaction with the service (for example, "How good were we at listening to you?"). The date and service area is also included with all feedback.
+
+There are up to two comments from each respondent, one in response to the question "What could we do better?" (intended to elicit crticism) and "What did we do well?" (intended to highlight areas of good practice).
+
+### Term frequency
+
+Term frequency for each question and all questions combined is given following, for all time and all service area.
+
+```{r, results = "asis"}
+
+termFrequency <- function(division = 0:2, 
+                          from = as.Date("2000-01-01"), 
+                          to = as.Date("2100-01-01")){
+  
+  functionData <- safeData %>% 
+    filter(Division %in% division, Date >= from, Date <= to)
+  
+  allComments <- functionData %>%
+    gather(Type, Comment, Improve, Best) %>% 
+    filter(!is.na(Comment)) %>% 
+    unnest_tokens(word, Comment)  %>%
+    anti_join(stop_words) %>% 
+    count(word, sort = TRUE) %>%
+    slice(1:10) %>%
+    as.data.frame() %>% 
+    rename(allComments = word)
+  
+  improveData <- functionData %>%
+    filter(!is.na(Improve)) %>% 
+    unnest_tokens(word, Improve) %>%
+    anti_join(stop_words) %>% 
+    count(word, sort = TRUE) %>%
+    slice(1:10) %>%
+    as.data.frame() %>% 
+    rename(DoBetter = word)
+  
+  bestData <- functionData %>%
+    filter(!is.na(Best)) %>% 
+    unnest_tokens(word, Best) %>%
+    anti_join(stop_words) %>% 
+    count(word, sort = TRUE) %>%
+    slice(1:10) %>%
+    as.data.frame() %>% 
+    rename(DoneWell = word)
+  
+  datatable(cbind(allComments, improveData, bestData))
+}
+
+termFrequency()
+
+```
+
+As can be seen, many of the words are common to all three tables. These common words include staff, service, and excellent. An n-gram approach is likely to yield more insight into the different ways in which these words are being used.
+
+#### Community mental health services
+
+```{r, results = "asis"}
+
+termFrequency(division = 0)
+
+```
+
+#### Community physical health services
+
+```{r, results = "asis"}
+
+termFrequency(division = 2)
+
+```
+
+#### Forensic mental health services
+
+```{r, results = "asis"}
+
+termFrequency(division = 1)
+
+```
+
+### Term frequency- inverse term frequency
+
+Results across all clinical areas are shown following.
+
+```{r, results = "asis"}
+
+idfFunction <- function(division = 0:2, 
+                        from = as.Date("2000-01-01"), 
+                        to = as.Date("2100-01-01")){
+  
+  functionData <- safeData %>% 
+    filter(Division %in% division, Date >= from, Date <= to)
+  
+  functionData %>%
+    select(Improve, Best) %>% 
+    gather(Type, Comment, Improve, Best) %>% 
+    filter(!is.na(Comment)) %>% 
+    unnest_tokens(word, Comment) %>% 
+    count(Type, word, sort = TRUE) %>% 
+    bind_tf_idf(word, Type, n) %>%
+    arrange(desc(tf_idf)) %>% 
+    slice(1 : 100) %>%
+    datatable() %>% 
+    formatRound(4 : 6, digits = 5)
+}
+
+idfFunction()
+
+```
+
+#### Commnunity mental health services
+
+```{r, results = "asis"}
+
+idfFunction(division = 0)
+
+```
+
+#### Commnunity physical health services
+
+```{r, results = "asis"}
+
+idfFunction(division = 2)
+
+```
+
+#### Forensic mental health services
+
+```{r, results = "asis"}
+
+idfFunction(division = 1)
+
+```
+
+### Term frequency- inverse term frequency comparing different areas
+
+```{r, results = "asis"}
+
+safeData %>%
+  select(Improve, Best, Division2) %>% 
+  gather(Type, Comment, Improve, Best, -Division2) %>% 
+  mutate(AreaQuestion = paste(Division2, "- ", Type)) %>%
+  filter(!is.na(Comment), !is.na(Division2)) %>% 
+  unnest_tokens(word, Comment) %>% 
+  count(AreaQuestion, word, sort = TRUE) %>% 
+  bind_tf_idf(word, AreaQuestion, n) %>%
+  arrange(desc(tf_idf)) %>% 
+  slice(1 : 100) %>%
+  datatable() %>% 
+  formatRound(4 : 6, digits = 5)
+
+```
+
+This analysis pretty much entirely comprises candidates for stop words- stop words that are, in this case, not syntactical filler words ("the", "of") but rather terms that are tied very much to a particular context- these include:
+
+* prisoners (the Trust provides mental and physical health services within prisons)
+* wing
+* blank
+* prison
+* hmp
+* camhs (that is, child and adolescent mental health services)
+* prisoner
+* rampton (this is one of the hospitals within the Trust)
+* hv
+
+The use of the word "blank" is merely a data quality issue and relates to data input staff within a particular area actually entering "Blank" when a comment box was left blank by a respondent. This has now been fixed in the live data and so "blank" will not appear in the table above in subsequent versions of this document- this text will be left as a record of the work.
+
+The analysis is repeated following with all of those stop words removed.
+
+```{r, results = "asis"}
+
+my_stop_words <- tibble(word = c("prisoners", "wing", "blank", "prison", "hmp",
+                                 "camhs", "prisoner", "rampton", "hv"))
+
+safeData %>%
+  select(Improve, Best, Division2) %>% 
+  gather(Type, Comment, Improve, Best, -Division2) %>% 
+  mutate(AreaQuestion = paste(Division2, "- ", Type)) %>%
+  filter(!is.na(Comment), !is.na(Division2)) %>% 
+  unnest_tokens(word, Comment) %>% 
+  anti_join(stop_words) %>% 
+  anti_join(my_stop_words) %>% 
+  count(AreaQuestion, word, sort = TRUE) %>% 
+  bind_tf_idf(word, AreaQuestion, n) %>%
+  arrange(desc(tf_idf)) %>% 
+  slice(1 : 100) %>%
+  datatable() %>% 
+  formatRound(4 : 6, digits = 5)
+
+```
