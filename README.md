@@ -7,3 +7,5 @@ I'll try to update this README once the project is a bit more advanced, read the
 Part of the point of doing this is trying to make tools that others can use, so I may as well develop it in the open right from the start.
 
 PRs welcome ;-)
+
+The publicly available Trello board can be found here https://trello.com/b/GlmtpsqB/data-science-accelerator
