@@ -25,6 +25,17 @@ knitr::opts_chunk$set(echo = FALSE, cache = TRUE, message = FALSE)
 
 load("safeData.Rdata")
 
+# demographics <- trustData %>% 
+#   filter(is.na(Optout) | Optout == "No") %>% 
+#   select(-TeamC, -TeamN, -Location, -key, -ImproveSecret, -BestSecret)
+# 
+# demographics <- demographics[sample(nrow(demographics)), ]
+# 
+# save(demographics, file = "demographics.Rdata")
+# 
+# safeData <- safeData %>% 
+#   select(key : TweetBest, TeamN : Location)
+
 ```
 
 ## Introduction

@@ -1,0 +1,226 @@
+---
+title: "Basic analyses"
+author: "Chris Beeley"
+date: "9 December 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(tidytext)
+library(pander)
+library(knitr)
+library(DT)
+library(stringr)
+library(lubridate)
+
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, message = FALSE, warning = FALSE)
+
+load("../safeData.Rdata")
+
+# remove the extraneous columns
+
+use_data <- safeData %>% 
+  select(Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
+
+# remove punctuation
+
+use_data <- use_data %>% 
+  mutate(Improve = str_to_lower(Improve)) %>% 
+  mutate(Improve = gsub("[[:punct:]]", "", Improve)) %>% 
+  mutate(Improve = str_squish(Improve))
+
+# remove the single word comments
+
+use_data <- use_data %>% 
+  filter(!Improve %in% c("none", "nothing", "declined", "no", "blank")) %>% 
+  filter(!Improve %in% c("", "0", "00", "100", "1010", "4444", "6", "6666", "7", "711", 
+                         "9", "a", "a ok", "ai", "all", "dont", "idk",  
+                         "n a", "n0", "na", "na9", "ni", "nil", "nine", 
+                         "nne", "non", "nonw", "nope", "note", "nout", "nowt", "nr", "ok", 
+                         "okay", "sw", "wa", "x", "x 56", "yes", "zero"))
+
+use_data <- use_data %>% 
+  filter(!is.na(Improve))
+
+# add year date column to data
+
+use_data <- use_data %>% 
+  mutate(year = year(Date))
+
+use_data <- use_data %>% 
+  mutate(month = month(Date))
+
+```
+
+## Summary
+
+This document is a summary of the main dataset that will be used for the project. This document will attempt to lay out the basic features of the dataset in order to make it clearer how to go about analysing it when the accelerator beings proper.
+
+At first this document will focus on critical comments (that is, comments made in response to the question "How could the service be improved?") but this may change over time. There are 50111 comments made in response to this question.
+
+The report will summarise the following features:
+
+* Counts of words and characters
+* Counts of comments within specific service areas (the service areas are listed following)
+* Yearly and monthly trends
+
+Consideration will be made of how to effectively visualise the dataset in regard of the characteristics above. Term frequency and inverse term- document frequency are summarised in a separate document within this repository (ProjectPlanAndResults.html).
+
+### Service areas
+
+The Trust receives feedback from clinical areas divided into three main areas:
+
+* Community mental health care. This comprises inpatient and outpatient mental healthcare for the Nottinghamshire area
+* Community physical health care. This comprises community and inpatient (but not acute) physical healthcare, including school nursing, phlebotomy, district nursing, diabetes services, podiatry, and many other types of care
+* Forensic mental health care. This comprises (mainly) inpatient and outpatient mental healthcare for individuals who require more intensive supervision due to a history of criminal offending or a risk of harm to others
+
+## Counts of words and characters
+
+### Words
+
+Histogram of word counts
+
+```{r}
+
+# add a comment number field that will allow us to count words per comment
+
+use_data$comment_number <- 1 : nrow(use_data)
+
+improve_words <- use_data %>%
+  unnest_tokens(word, Improve, token = "words") %>% 
+  filter(!is.na(word))
+
+improve_words %>% 
+  group_by(comment_number) %>%
+  summarise(n = n()) %>% 
+  ggplot(aes(x = n)) + geom_histogram()
+
+```
+
+Histogram of logged word counts
+
+```{r}
+
+improve_words %>% 
+  group_by(comment_number) %>%
+  summarise(n = n()) %>% 
+  ggplot(aes(x = log(n))) + geom_histogram()
+
+```
+
+<!-- Note that the following section is for me, it is not rendered -->
+
+```{r, results = "asis", include = FALSE}
+
+improve_words %>% 
+  group_by(comment_number) %>%
+  summarise(n = n()) %>% 
+  group_by(n) %>% 
+  summarise(freq = n()) %>% 
+  slice(1:10) %>% 
+  pandoc.table()
+
+```
+
+#### Characterising the comments with low word counts
+
+Initially, there were 13315 comments which had only 1 word in. Of these, there were 567 unique single word responses. 
+
+Many of these single word entries were the word "Nothing", or the word "Blank". These words have been removed from the initial dataset, leaving only 1082 comments with single words, many of which are meaningful ("food", "parking").
+
+```{r}
+
+one_word_comment_numbers <- improve_words %>% 
+  group_by(comment_number) %>%
+  summarise(n = n()) %>% 
+  filter(n == 1) %>% 
+  pull(comment_number)
+
+unique_single_words <- use_data %>% 
+  filter(comment_number %in% one_word_comment_numbers) %>% 
+  pull(Improve) %>% 
+  table() %>% 
+  sort()
+
+two_word_comment_numbers <- improve_words %>% 
+  group_by(comment_number) %>%
+  summarise(n = n()) %>% 
+  filter(n == 2) %>% 
+  pull(comment_number)
+
+unique_two_words <- use_data %>% 
+  filter(comment_number %in% two_word_comment_numbers) %>% 
+  pull(Improve) %>% 
+  table() %>% 
+  sort()
+
+```
+
+Two word comments were, on the whole, meaningful, and have been kept in
+
+### Characters
+
+The number of characters in each comment is shown following.
+
+```{r}
+
+tibble("Improve" = nchar(use_data$Improve)) %>% 
+  ggplot(aes(x = Improve)) + geom_histogram()
+
+```
+
+The logged number of characters is shown following.
+
+```{r}
+
+tibble("Improve" = nchar(use_data$Improve)) %>% 
+  ggplot(aes(x = log(Improve))) + geom_histogram()
+
+```
+
+
+```{r, include = FALSE}
+
+use_data %>% 
+  filter(nchar(Improve) < 7) %>% 
+  group_by(Improve) %>% 
+  summarise(n = n()) %>% 
+  arrange() %>% 
+  pull(Improve) %>% 
+  dput()
+
+```
+
+## Number of comments over time and service area
+
+```{r, results = "asis"}
+
+use_data %>% 
+  group_by(Division2) %>% 
+  summarise(n = n()) %>% 
+  pandoc.table()
+
+```
+
+```{r}
+
+use_data %>% 
+  filter(Date >= as.Date("2014-01-01")) %>% 
+  group_by(year, month) %>% 
+  summarise(n = n()) %>% 
+  ungroup() %>% 
+  mutate(month = factor(month)) %>% 
+  mutate(year = factor(year)) %>% 
+  ggplot(aes(x = month, y = n, group = year, colour = year)) + geom_line()
+
+# safeData %>% 
+#   group_by(Time) %>% 
+#   summarise(n = n()) %>% 
+#   ungroup() %>% 
+#   mutate(Time = factor(Time)) %>% 
+#   ggplot(aes(x = Time, y = n)) + geom_line(group = 1)
+
+```
+
