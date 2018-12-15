@@ -1,0 +1,269 @@
+---
+title: "Word Embeddings with Keras"
+author: "Chris Beeley"
+date: "15 December 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+## Download data
+
+This is a tutorial hosted [here](https://blogs.rstudio.com/tensorflow/posts/2017-12-22-word-embeddings-with-keras/).
+
+```{r}
+
+# download.file("https://snap.stanford.edu/data/finefoods.txt.gz", "finefoods.txt.gz")
+
+library(readr)
+library(stringr)
+library(tidyverse)
+
+# reviews <- read_lines("finefoods.txt.gz") 
+# reviews <- reviews[str_sub(reviews, 1, 12) == "review/text:"]
+# reviews <- str_sub(reviews, start = 14)
+# reviews <- iconv(reviews, to = "UTF-8")
+
+load("../safeData.Rdata")
+
+# remove the extraneous columns
+
+use_data <- safeData %>% 
+  select(Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
+
+# remove punctuation
+
+use_data <- use_data %>% 
+  mutate(Improve = str_to_lower(Improve)) %>% 
+  mutate(Improve = gsub("[[:punct:]]", "", Improve)) %>% 
+  mutate(Improve = str_squish(Improve))
+
+# remove the single word comments
+
+use_data <- use_data %>% 
+  filter(!Improve %in% c("none", "nothing", "declined", "no", "blank")) %>% 
+  filter(!Improve %in% c("", "0", "00", "100", "1010", "4444", "6", "6666", "7", "711", 
+                         "9", "a", "a ok", "ai", "all", "dont", "idk",  
+                         "n a", "n0", "na", "na9", "ni", "nil", "nine", 
+                         "nne", "non", "nonw", "nope", "note", "nout", "nowt", "nr", "ok", 
+                         "okay", "sw", "wa", "x", "x 56", "yes", "zero"))
+
+use_data <- use_data %>% 
+  filter(!is.na(Improve))
+
+# add year date column to data
+
+use_data <- use_data %>% 
+  mutate(year = year(Date))
+
+use_data <- use_data %>% 
+  mutate(month = month(Date))
+
+reviews <- use_data$Improve
+
+head(reviews)
+
+```
+
+## Preprocessing
+
+```{r}
+
+library(keras)
+
+# this is rewritten because you need to know the number of words for the tokeniser
+
+guess <- 10000 # Use a guess here
+
+tokenizer <- text_tokenizer(num_words = guess) %>%
+  fit_text_tokenizer(reviews)
+
+num_words <- length(tokenizer$word_index) %>%
+  min(20000)
+
+tokenizer <- text_tokenizer(num_words = num_words) %>%
+  fit_text_tokenizer(reviews)
+
+# tokenizer <- text_tokenizer(num_words = 20000)
+# tokenizer %>% fit_text_tokenizer(reviews)
+
+# check number of words per comment- must be >1
+
+reviews_check <- reviews %>% texts_to_sequences(tokenizer,.) %>% lapply(., function(x) length(x) > 1) %>% unlist(.)
+
+reviews <- reviews[reviews_check]
+
+```
+
+## Skip gram
+
+```{r}
+
+library(reticulate)
+library(purrr)
+skipgrams_generator <- function(text, tokenizer, window_size, negative_samples) {
+  gen <- texts_to_sequences_generator(tokenizer, sample(text))
+  function() {
+    skip <- generator_next(gen) %>%
+      skipgrams(
+        vocabulary_size = tokenizer$num_words, 
+        window_size = window_size, 
+        negative_samples = 1
+      )
+    x <- transpose(skip$couples) %>% map(. %>% unlist %>% as.matrix(ncol = 1))
+    y <- skip$labels %>% as.matrix(ncol = 1)
+    list(x, y)
+  }
+}
+
+```
+
+## Define keras model using Keras API
+
+API is (here)[https://keras.rstudio.com/articles/functional_api.html]
+
+```{r}
+
+# We will first write placeholders for the inputs using the layer_input function.
+
+embedding_size <- 128  # Dimension of the embedding vector.
+skip_window <- 5       # How many words to consider left and right.
+num_sampled <- 1       # Number of negative examples to sample for each word.
+
+# Now let’s define the embedding matrix. The embedding is a matrix with dimensions 
+# (vocabulary, embedding_size) that acts as lookup table for the word vectors.
+
+input_target <- layer_input(shape = 1)
+input_context <- layer_input(shape = 1)
+
+embedding <- layer_embedding(
+  input_dim = tokenizer$num_words + 1, 
+  output_dim = embedding_size, 
+  input_length = 1, 
+  name = "embedding"
+)
+
+target_vector <- input_target %>% 
+  embedding() %>% 
+  layer_flatten()
+
+context_vector <- input_context %>%
+  embedding() %>%
+  layer_flatten()
+
+# The next step is to define how the target_vector will be related to the context_vector 
+# in order to make our network output 1 when the context word really appeared in the context 
+# and 0 otherwise. We want target_vector to be similar to the context_vector if they appeared 
+# in the same context. A typical measure of similarity is the cosine similarity. 
+# Give two vectors A and B the cosine similarity is defined by the Euclidean Dot product of 
+# A and B normalized by their magnitude. As we don’t need the similarity to be normalized 
+# inside the network, we will only calculate the dot product and then output
+# a dense layer with sigmoid activation.
+
+dot_product <- layer_dot(list(target_vector, context_vector), axes = 1)
+output <- layer_dense(dot_product, units = 1, activation = "sigmoid")
+
+# Now we will create the model and compile it.
+
+model <- keras_model(list(input_target, input_context), output)
+model %>% compile(loss = "binary_crossentropy", optimizer = "adam")
+
+summary(model)
+
+```
+
+## Model training
+
+We will fit the model using the fit_generator() function We need to specify the number of training steps as well as number of epochs we want to train. We will train for 100,000 steps for 5 epochs. This is quite slow (~1000 seconds per epoch on a modern GPU). Note that you may also get reasonable results with just one epoch of training.
+
+```{r}
+
+model %>%
+  fit_generator(
+    skipgrams_generator(reviews, tokenizer, skip_window, negative_samples), 
+    steps_per_epoch = 100000, epochs = 5
+    # steps_per_epoch = 10000, epochs = 1 # deliberately quicker
+    )
+
+# We can now extract the embeddings matrix from the model by using the get_weights() function. 
+# We also added row.names to our embedding matrix so we can easily find where each word is.
+
+library(dplyr)
+
+embedding_matrix <- get_weights(model)[[1]]
+
+words <- data_frame(
+  word = names(tokenizer$word_index), 
+  id = as.integer(unlist(tokenizer$word_index))
+)
+
+words <- words %>%
+  filter(id <= tokenizer$num_words) %>%
+  arrange(id)
+
+row.names(embedding_matrix) <- c("UNK", words$word)
+
+```
+
+## Understanding the Embeddings
+
+We can now find words that are close to each other in the embedding. We will use the cosine similarity, since this is what we trained the model to minimize.
+
+```{r}
+
+library(text2vec)
+
+find_similar_words <- function(word, embedding_matrix, n = 5) {
+  similarities <- embedding_matrix[word, , drop = FALSE] %>%
+    sim2(embedding_matrix, y = ., method = "cosine")
+  
+  similarities[,1] %>% sort(decreasing = TRUE) %>% head(n)
+}
+
+find_similar_words("2", embedding_matrix)
+
+#         2         4         3       two         6 
+# 1.0000000 0.9830254 0.9777042 0.9765668 0.9722549 
+
+find_similar_words("little", embedding_matrix)
+
+#    little       bit       few     small     treat 
+# 1.0000000 0.9501037 0.9478287 0.9309829 0.9286966 
+
+find_similar_words("delicious", embedding_matrix)
+
+# delicious     tasty wonderful   amazing     yummy 
+# 1.0000000 0.9632145 0.9619508 0.9617954 0.9529505 
+
+find_similar_words("cats", embedding_matrix)
+
+     # cats      dogs      kids       cat       dog 
+# 1.0000000 0.9844937 0.9743756 0.9676026 0.9624494 
+```
+
+## TSNE
+
+The t-SNE algorithm can be used to visualize the embeddings. Because of time constraints we will only use it with the first 500 words. To understand more about the t-SNE method see the article How to Use t-SNE Effectively.
+
+This plot may look like a mess, but if you zoom into the small groups you end up seeing some nice patterns. Try, for example, to find a group of web related words like http, href, etc. Another group that may be easy to pick out is the pronouns group: she, he, her, etc.
+
+```{r}
+
+library(Rtsne)
+library(ggplot2)
+library(plotly)
+
+tsne <- Rtsne(embedding_matrix[2:500,], perplexity = 50, pca = FALSE)
+
+tsne_plot <- tsne$Y %>%
+  as.data.frame() %>%
+  mutate(word = row.names(embedding_matrix)[2:500]) %>%
+  ggplot(aes(x = V1, y = V2, label = word)) + 
+  geom_text(size = 3)
+tsne_plot
+
+```
