@@ -1,0 +1,199 @@
+---
+title: "Tag bigrams"
+author: "Chris Beeley"
+date: "8 January 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(tidytext)
+library(igraph)
+library(ggraph)
+
+knitr::opts_chunk$set(echo = TRUE)
+
+load("../cleanData.Rdata")
+
+use_data2 <- use_data %>% 
+  left_join(categoriesTable, by = c("Imp1" = "Number"))
+
+use_data2 <- use_data2 %>% 
+  left_join(categoriesTable, by = c("Imp2" = "Number"))
+
+use_data2 <- use_data2 %>% 
+  filter(!is.na(Super.x), !is.na(Super.y))
+
+bigram_counts <- use_data2 %>% 
+  count(Super.x, Super.y, sort = TRUE)
+
+bigrams_united <- use_data2 %>% 
+  unite(bigram, Super.x, Super.y, sep = " ")
+
+bigrams_united %>% 
+  count(Division2, bigram) %>%  
+  filter(!is.na(Division2)) %>%
+  filter(!bigram %in% c("comments entered", "questionnaires patient", "99 naunclearblank",
+                        "east leake", "park house", "rampton hospital", "arnold lodge",
+                        "patient declined")) %>%
+  group_by(Division2) %>%
+  top_n(15, n) %>% 
+  arrange(n) %>%
+  # ggplot(aes(x = reorder(bigram, n), n, fill = Division2)) +
+  ggplot(aes(x = reorder(bigram, n), n, fill = Division2)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Division2, scales = "free") +
+  labs(x = NULL) +
+  coord_flip()
+
+```
+
+## Plot bigrams with super categories
+
+This plot shows the words that most commonly co-occur in each of the three divisions.
+
+```{r}
+
+bigrams <- use_data %>% 
+  select(Improve, Division2) %>% 
+  unnest_tokens(bigram, Improve, token = "ngrams", n = 2)
+
+bigrams_separated <- bigrams %>% 
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filtered <- bigrams_separated %>% 
+  filter(!word1 %in% stop_words$word) %>% 
+  filter(!word2 %in% stop_words$word)
+
+bigram_counts <- bigrams_filtered %>% 
+  count(word1, word2, sort = TRUE)
+
+bigrams_united <- bigrams_filtered %>% 
+  unite(bigram, word1, word2, sep = " ")
+
+bigrams_united %>% 
+  count(Division2, bigram) %>%  
+  filter(!is.na(Division2)) %>%
+  filter(!bigram %in% c("comments entered", "questionnaires patient", "99 naunclearblank",
+                        "east leake", "park house", "rampton hospital", "arnold lodge",
+                        "patient declined")) %>%
+  group_by(Division2) %>%
+  top_n(15, n) %>% 
+  arrange(n) %>%
+  # ggplot(aes(x = reorder(bigram, n), n, fill = Division2)) +
+  ggplot(aes(x = reorder(bigram, n), n, fill = Division2)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Division2, scales = "free") +
+  labs(x = NULL) +
+  coord_flip()
+
+```
+
+As can be seen some phrases, like "mental health" tend to appear frequently in all divisions. The next output includes a way to ignore those terms that are frequent across all datasets
+
+## Plot tf-idf of bigrams
+
+This output show the term frequency/ inverse term frequency across the three divisions. What this means is that a score is generated which takes account not only of how common a phrase is within the dataset, but also how uncommon it is in the other divisions. High scoring terms, therefore, are common in the division in which they are considered and uncommon in the other divisions.
+
+```{r}
+
+bigram_tf_idf <- bigrams_united %>% 
+  count(Division2, bigram) %>% 
+  bind_tf_idf(bigram, Division2, n) %>% 
+  arrange(desc(tf_idf))
+
+# remove stopwords
+
+bigram_tf_idf <- bigram_tf_idf %>% 
+  filter(!bigram %in% c("comments entered", "questionnaires patient", "99 naunclearblank",
+                        "east leake", "park house", "rampton hospital", "arnold lodge",
+                        "patient declined"))
+
+bigram_tf_idf %>% 
+  group_by(Division2) %>% 
+  top_n(15, tf_idf) %>% 
+  arrange(tf_idf) %>% 
+  ggplot(aes(x = reorder(bigram, tf_idf), tf_idf, fill = Division2)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Division2, scales = "free") +
+  labs(x = NULL) +
+  coord_flip()
+
+```
+
+## Plot network of bigrams
+
+This plot shows networks of words that co-occur. Data from all three divisions is used.
+
+```{r}
+
+bigram_graph <- bigram_counts %>% 
+  top_n(40, n) %>% 
+  graph_from_data_frame()
+
+# set.seed(1234)
+ggraph(bigram_graph, layout = "circle") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n)) + 
+  geom_node_point() +
+  geom_node_text(aes(label = name, color = "red"), repel = TRUE)
+
+```
+
+## Sub categories
+
+```{r}
+
+use_data2 <- use_data2 %>% 
+  filter(!is.na(Category.x), !is.na(Category.y))
+
+use_data2 <- use_data2 %>% 
+  mutate(Category.x = paste(Super.x, Category.x)) %>% 
+  mutate(Category.y = paste(Super.y, Category.y))
+
+bigram_counts <- use_data2 %>% 
+  count(Category.x, Category.y, sort = TRUE)
+
+# bigrams_united <- use_data2 %>% 
+#   unite(bigram, Category.x, Category.y, sep = " ")
+  # unite(bigram, Category.x, Category.y, sep = ":")
+
+bigrams_united <- use_data2 %>% 
+  mutate(bigram = paste(Category.x, " : ", Category.y))
+
+
+bigrams_united %>% 
+  count(Division2, bigram) %>%  
+  filter(!is.na(Division2)) %>%
+  filter(!bigram %in% c("comments entered", "questionnaires patient", "99 naunclearblank",
+                        "east leake", "park house", "rampton hospital", "arnold lodge",
+                        "patient declined")) %>%
+  group_by(Division2) %>%
+  top_n(15, n) %>% 
+  arrange(n) %>%
+  # ggplot(aes(x = reorder(bigram, n), n, fill = Division2)) +
+  ggplot(aes(x = reorder(bigram, n), n)) +
+  geom_col(show.legend = FALSE) +
+  # facet_wrap(~ Division2, scales = "free") +
+  labs(x = NULL) +
+  coord_flip()
+
+```
+
+## Plot network of bigrams
+
+This plot shows networks of words that co-occur. Data from all three divisions is used.
+
+```{r}
+
+bigram_graph <- bigram_counts %>% 
+  top_n(40, n) %>% 
+  graph_from_data_frame()
+
+# set.seed(1234)
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n, edge_width = n)) + 
+  geom_node_point() +
+  geom_node_text(aes(label = name, color = "red"), repel = TRUE)
+
+```
