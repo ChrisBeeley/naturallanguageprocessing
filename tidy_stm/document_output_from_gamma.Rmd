@@ -1,0 +1,58 @@
+---
+title: "Document output from stm gamma estimates"
+author: "Chris Beeley"
+date: "19 January 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(tidytext)
+library(stm)
+library(quanteda)
+library(drlib)
+library(ggthemes)
+library(scales)
+
+load("savedata3.Rdata")
+
+topic_model <- k_result %>% 
+  filter(K == 45) %>% 
+  pull(topic_model) %>% 
+  .[[1]]
+
+```
+
+## Find documents with high gamma
+
+```{r, results="asis"}
+
+lda_gamma <- tidy(topic_model, matrix = "gamma",
+                 document_names = rownames(tidy_sparse))
+
+gamma_comments <- lda_gamma %>% 
+  group_by(topic) %>% 
+  top_n(5, gamma) %>% 
+  left_join(
+    use_data %>% mutate(comment = as.character(comment)), 
+    by = c("document" = "comment")
+  ) %>% 
+  arrange(topic)
+
+invisible(
+  walk(unique(gamma_comments$topic), function(x){
+    
+    each_topic <- gamma_comments %>% 
+      filter(topic == x) %>% 
+      pull(Improve) 
+    
+    cat("<h3>Topic: ", x, "</h3>")
+    
+    cat(paste("<p>", each_topic, "</p>"))
+  })
+)
+
+```
