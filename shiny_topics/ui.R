@@ -1,12 +1,13 @@
 
 library(DT)
+library(plotly)
 
 fluidPage(
   
   titlePanel("Tuning stm models"),
   
   sidebarLayout(
-    sidebarPanel(
+    div(id ="Sidebar", sidebarPanel(
       
       fileInput("modelFile", "Load previous run",
                 multiple = FALSE),
@@ -36,7 +37,10 @@ fluidPage(
       
       actionButton("executeModel", "Run topic model"),
       
-      uiOutput("numberOfTopics")
+      uiOutput("numberOfTopics"),
+      
+      uiOutput("selectTopic")
+    )
     ),
     
     mainPanel(
@@ -52,15 +56,26 @@ fluidPage(
         ),
         tabPanel(
           "Beta plot",
-          plotOutput("betaPlot")
+          plotOutput("betaPlot", height = "800px")
         ),
         tabPanel(
           "Gamma plot",
-          p("This will hold a gamma plot")
+          plotOutput("gammaPlot")
         ),
         tabPanel(
-          "Tag networks",
-          p("Tab 5, app 1- diagnostics. Top 100 documents for each topic. Check distribution of p. Network graph of TAGS. ? network of words")
+          "Top documents",
+          p("Top 100 documents for each topic."),
+          htmlOutput("topDocuments")
+        ),
+        tabPanel(
+          "Document gamma distribution",
+          p("Check distribution of p"),
+          plotOutput("documentGamma", height = "800px")
+        ),
+        tabPanel(
+          "Tag network",
+          plotOutput("bigramNetwork"),
+          sliderInput("bigramSlider", "Number of terms", 20, 160, 100, step = 10)
         )
       )
     )

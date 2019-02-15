@@ -7,13 +7,16 @@ library(stringi)
 
 load("~/shiny.Rdata")
 
+trustData <- trustData %>% 
+  mutate(comment = row_number())
+
 safeData <- trustData %>% 
   filter(is.na(Optout) | Optout == "No")
 
 # remove the extraneous columns
 
 use_data <- safeData %>% 
-  select(Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
+  select(comment, Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
 
 # remove punctuation
 
@@ -35,7 +38,7 @@ use_data <- use_data %>%
 
 use_data <- use_data %>% 
   filter(!is.na(Improve)) %>% 
-  mutate(comment = row_number()) %>% 
+  filter(!Imp1 %in% c(444, 4444, 5555)) %>% 
   mutate(word_count = stri_count_words(Improve))
 
 improve_words <- use_data %>%
@@ -51,4 +54,6 @@ improve_words <- improve_words %>%
 #   head(1000) %>% 
 #   write.csv(file = "check")
 
-save(improve_words, use_data, categoriesTable, file = "cleanData.Rdata")
+save(improve_words, use_data, categoriesTable, trustData, file = "cleanData.Rdata")
+
+write.csv(use_data, file = "for_gensim.csv")
