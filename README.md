@@ -1,11 +1,11 @@
-# NLP of patient experience data in the NHS
+# Data mining of patient experience data in the NHS
 
 This is the project that I am completing within the data science accelerator programme, focused on NLP of staff and patients experience data.
 
-I'll try to update this README once the project is a bit more advanced, read the ProjectPlanAndResults.Rmd or its HTML version for more details
+Read the ProjectPlanAndResults.Rmd or its HTML version for more details
 
-Part of the point of doing this is trying to make tools that others can use, so I may as well develop it in the open right from the start.
+It should be possible in principle to run all the code based on the data in this repository, but it isn't structured in the most logical way for others to make sense of, and there's quite a bit of work in a different repository which is hard to share here.
 
-PRs welcome ;-)
+I hope to come back to this to make a pipeline that's easier to just run straight from the repository.
 
 The publicly available Trello board can be found here https://trello.com/b/GlmtpsqB/data-science-accelerator
