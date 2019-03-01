@@ -149,11 +149,11 @@ function(input, output) {
     
     plan(multiprocess)
     
-    many_models <- data_frame(K = c(30, 40)) %>%
-    # many_models <- data_frame(K = c(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150)) %>%
-      # mutate(topic_model = future_map(K, ~stm(tidy_sparse, K = .,
-      mutate(topic_model = map(K, ~stm(tidy_sparse, K = .,
-                                              verbose = FALSE)))
+    # many_models <- data_frame(K = c(40)) %>%
+    many_models <- data_frame(K = c(10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150)) %>%
+    mutate(topic_model = future_map(K, ~stm(tidy_sparse, K = .), .progress = TRUE))
+      # mutate(topic_model = map(K, ~stm(tidy_sparse, K = .,
+                                              
     
     removeModal()
     
