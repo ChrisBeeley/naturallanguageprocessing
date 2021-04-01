@@ -22,17 +22,19 @@ This is a tutorial hosted [here](https://blogs.rstudio.com/tensorflow/posts/2017
 library(readr)
 library(stringr)
 library(tidyverse)
+library(lubridate)
+library(tensorflow)
 
 # reviews <- read_lines("finefoods.txt.gz") 
 # reviews <- reviews[str_sub(reviews, 1, 12) == "review/text:"]
 # reviews <- str_sub(reviews, start = 14)
 # reviews <- iconv(reviews, to = "UTF-8")
 
-load("../safeData.Rdata")
+load("../cleanData.Rdata")
 
 # remove the extraneous columns
 
-use_data <- safeData %>% 
+use_data <- use_data %>% 
   select(Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
 
 # remove punctuation
