@@ -1,0 +1,228 @@
+---
+title: "Tidy word vectors"
+author: "Chris Beeley"
+date: "16 December 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+load("../safeData.Rdata")
+# load("safeData.Rdata")
+
+# remove the extraneous columns
+
+use_data <- safeData %>% 
+  select(Date, Time, formtype, Improve : BestCrit, Division2, Directorate2, Location)
+
+# remove punctuation
+
+use_data <- use_data %>% 
+  mutate(Improve = str_to_lower(Improve)) %>% 
+  mutate(Improve = gsub("[[:punct:]]", "", Improve)) %>% 
+  mutate(Improve = str_squish(Improve))
+
+# remove the single word comments
+
+use_data <- use_data %>% 
+  filter(!Improve %in% c("none", "nothing", "declined", "no", "blank")) %>% 
+  filter(!Improve %in% c("", "0", "00", "100", "1010", "4444", "6", "6666", "7", "711", 
+                         "9", "a", "a ok", "ai", "all", "dont", "idk",  
+                         "n a", "n0", "na", "na9", "ni", "nil", "nine", 
+                         "nne", "non", "nonw", "nope", "note", "nout", "nowt", "nr", "ok", 
+                         "okay", "sw", "wa", "x", "x 56", "yes", "zero"))
+
+use_data <- use_data %>% 
+  filter(!is.na(Improve))
+
+```
+
+## Word vectors with tidy data principles
+
+This is based on the blog post [here](https://juliasilge.com/blog/tidy-word-vectors/).
+
+```{r}
+
+library(stringr)
+
+hacker_news_text <- use_data$Improve %>%
+    as_tibble() %>%
+    mutate(text = str_replace_all(value, "&quot;|&#x2F;", "'"),    ## hex encoding
+           text = str_replace_all(value, "&#x2F;", "/"),           ## more hex
+           text = str_replace_all(value, "<a(.*?)>", " "),         ## links 
+           text = str_replace_all(value, "&gt;|&lt;", " "),        ## html yuck
+           text = str_replace_all(value, "<[^>]*>", " "),          ## mmmmm, more html yuck
+           postID = row_number()) %>% 
+  select(-value)
+
+```
+
+## Unigram probabilities
+
+```{r}
+
+library(tidytext)
+
+unigram_probs <- hacker_news_text %>%
+    unnest_tokens(word, text) %>%
+    count(word, sort = TRUE) %>%
+    mutate(p = n / sum(n))
+
+unigram_probs
+
+```
+
+## Skipgram probabilities
+
+```{r}
+
+library(widyr)
+
+tidy_skipgrams <- hacker_news_text %>%
+    unnest_tokens(ngram, text, token = "ngrams", n = 8) %>%
+    mutate(ngramID = row_number()) %>% 
+    unite(skipgramID, postID, ngramID) %>%
+    unnest_tokens(word, ngram) %>% 
+  filter(!is.na(word))
+
+tidy_skipgrams
+
+```
+
+```{r}
+
+skipgram_probs <- tidy_skipgrams %>%
+    pairwise_count(word, skipgramID, diag = TRUE, sort = TRUE) %>%
+    mutate(p = n / sum(n))
+
+```
+
+## Normalized skipgram probability
+
+We now know how often words occur on their own, and how often words occur together with other words. We can calculate which words occurred together more often than expected based on how often they occurred on their own. When this number is high (greater than 1), the two words are associated with each other, likely to occur together. When this number is low (less than 1), the two words are not associated with each other, unlikely to occur together.
+
+```{r}
+
+normalized_prob <- skipgram_probs %>%
+    filter(n > 20) %>%
+    rename(word1 = item1, word2 = item2) %>%
+    left_join(unigram_probs %>%
+                  select(word1 = word, p1 = p),
+              by = "word1") %>%
+    left_join(unigram_probs %>%
+                  select(word2 = word, p2 = p),
+              by = "word2") %>%
+    mutate(p_together = p / p1 / p2)
+
+```
+
+What are the words most associated with staff in the data?
+
+```{r}
+
+normalized_prob %>% 
+    filter(word1 == "staff") %>%
+    arrange(-p_together)
+
+```
+
+What about access?
+
+```{r}
+
+normalized_prob %>% 
+    filter(word1 == "access") %>%
+    arrange(-p_together)
+
+```
+
+## Cast to a sparse matrix
+
+We want to do matrix factorization, so we should probably make a matrix. We can use cast_sparse() from the tidytext package to transform our tidy data frame to a matrix.
+
+```{r}
+
+pmi_matrix <- normalized_prob %>%
+    mutate(pmi = log10(p_together)) %>%
+    cast_sparse(word1, word2, pmi)
+
+```
+
+## Reduce the matrix dimensionality
+
+We want to get information out of this giant matrix in a more useful form, so it’s time for singular value decomposition. Since we have a sparse matrix, we don’t want to use base R’s svd function, which casts the input to a plain old matrix (not sparse) first thing. Instead we will use the fast SVD algorithm for sparse matrices in the irlba package.
+
+```{r}
+
+library(irlba)
+
+pmi_svd <- irlba(pmi_matrix, 256, maxit = 1e3)
+
+```
+
+
+The number 256 here means that we are finding 256-dimensional vectors for the words. This is another thing that I am not sure exactly what the best number is, but it will be easy to experiment with. Doing the matrix factorization is another part of this process that is a bit time intensive, but certainly not slow compared to training word2vec on a big corpus. In my experimenting here, it takes less time than counting up the skipgrams.
+
+Once we have the singular value decomposition, we can get out the word vectors! Let’s set some row names, using our input, so we can find out what is what.
+
+```{r}
+
+word_vectors <- pmi_svd$u
+rownames(word_vectors) <- rownames(pmi_matrix)
+
+```
+
+Now we can search our matrix of word vectors to find synonyms. I want to get back to a tidy data structure at this point, so I’ll write a new little function for tidying.
+
+```{r}
+
+library(broom)
+
+search_synonyms <- function(word_vectors, selected_vector) {
+    
+    similarities <- word_vectors %*% selected_vector %>%
+        tidy() %>%
+        as_tibble() %>%
+        rename(token = .rownames,
+               similarity = unrowname.x.)
+    
+    similarities %>%
+        arrange(-similarity)    
+}
+
+staff <- search_synonyms(word_vectors, word_vectors["staff",])
+
+staff
+
+access <- search_synonyms(word_vectors, word_vectors["access",])
+
+access
+
+```
+
+```{r}
+
+staff %>%
+    mutate(selected = "staff") %>%
+    bind_rows(access %>%
+                  mutate(selected = "access")) %>%
+    group_by(selected) %>%
+    top_n(15, similarity) %>%
+    ungroup %>%
+    mutate(token = reorder(token, similarity)) %>%
+    ggplot(aes(token, similarity, fill = selected)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~selected, scales = "free") +
+    coord_flip() +
+    theme(strip.text=element_text(hjust=0, family="Roboto-Bold", size=12)) +
+    scale_y_continuous(expand = c(0,0)) +
+    labs(x = NULL, title = "What word vectors are most similar to staff or access?",
+         subtitle = "Based on the what could we improve question, calculated using counts and matrix factorization")
+
+```
+
+
